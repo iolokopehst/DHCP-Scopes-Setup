@@ -1,70 +1,110 @@
 <#
 .SYNOPSIS
-    Automates DHCP scope creation, option configuration, and server authorization on Windows Server.
-
+    Automated DHCP scopes setup with error handling.
 .DESCRIPTION
-    - Prompts for number of scopes, base subnet, scope names, and IP ranges
-    - Creates all scopes
-    - Sets default router (gateway) and DNS server (uses server IP)
-    - Authorizes the DHCP server in AD
+    - Checks for Admin privileges
+    - Installs DHCP role if missing
+    - Prompts for scopes and ranges
+    - Configures router and DNS options
+    - Authorizes DHCP server in AD
+    - Full error handling and pause
+.NOTES
+    Run as Administrator on your Domain Controller.
 #>
 
-# Ensure DHCP module and role are installed
-if (-not (Get-WindowsFeature -Name DHCP)) {
-    Install-WindowsFeature DHCP -IncludeManagementTools
-    Write-Host "DHCP Server role installed."
-}
+try {
+    # ----------------------------
+    # Admin Check
+    # ----------------------------
+    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        Write-Warning "This script must be run as Administrator. Exiting..."
+        Start-Sleep -Seconds 5
+        exit
+    }
 
-Import-Module DhcpServer -ErrorAction Stop
+    # ----------------------------
+    # Install DHCP Server Role if needed
+    # ----------------------------
+    try {
+        if (-not (Get-WindowsFeature DHCP).Installed) {
+            Write-Host "Installing DHCP Server role..."
+            Install-WindowsFeature DHCP -IncludeManagementTools -ErrorAction Stop
+            Write-Host "DHCP Server role installed successfully."
+        } else {
+            Write-Host "DHCP Server role already installed. Skipping installation."
+        }
+    }
+    catch {
+        Write-Error "Failed to install DHCP role: $_"
+    }
 
-# Get server IP to use as DNS
-$ServerIP = (Get-NetIPAddress | Where-Object { $_.AddressFamily -eq 'IPv4' -and $_.IPAddress -notlike '169.254*' }).IPAddress
-if (-not $ServerIP) { 
-    Write-Host "Could not detect server IP. Please ensure server has a static IP." 
-    exit 
-}
+    # ----------------------------
+    # Prompt for number of scopes
+    # ----------------------------
+    $ScopeCount = Read-Host "Enter the number of DHCP scopes to create"
+    if (-not [int]::TryParse($ScopeCount, [ref]$null)) {
+        Write-Error "Invalid number entered. Exiting..."
+        exit
+    }
 
-# Prompt for input
-$ScopeCount = Read-Host "Enter number of DHCP scopes to create"
-[int]$ScopeCount = [int]$ScopeCount
+    # ----------------------------
+    # Loop to collect scope info
+    # ----------------------------
+    $Scopes = @()
+    for ($i = 1; $i -le $ScopeCount; $i++) {
+        Write-Host "`nScope #$i:"
+        $ScopeName = Read-Host "Enter scope name"
+        $StartIP   = Read-Host "Enter starting IP address (e.g., 192.168.1.10)"
+        $EndIP     = Read-Host "Enter ending IP address (e.g., 192.168.1.50)"
+        $Subnet    = Read-Host "Enter subnet mask (e.g., 255.255.255.0)"
+        $Scopes += [PSCustomObject]@{
+            Name      = $ScopeName
+            StartIP   = $StartIP
+            EndIP     = $EndIP
+            Subnet    = $Subnet
+        }
+    }
 
-$BaseSubnet = Read-Host "Enter base subnet (e.g., 192.168.1)"
-$Gateway = Read-Host "Enter default gateway for scopes (or leave blank to skip)"
+    # ----------------------------
+    # Create scopes
+    # ----------------------------
+    foreach ($Scope in $Scopes) {
+        try {
+            Write-Host "`nCreating DHCP scope: $($Scope.Name)"
+            Add-DhcpServerv4Scope -Name $Scope.Name -StartRange $Scope.StartIP -EndRange $Scope.EndIP -SubnetMask $Scope.Subnet -State Active -ErrorAction Stop
 
-$Scopes = @()
+            # Set router and DNS options
+            $NIC = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+            $ServerIP = (Get-NetIPAddress -InterfaceIndex $NIC.ifIndex -AddressFamily IPv4 | Where-Object { $_.PrefixOrigin -eq "Manual" }).IPAddress
+            if ($ServerIP) {
+                Set-DhcpServerv4OptionValue -ScopeId $Scope.StartIP -Router $ServerIP -DnsServer $ServerIP -ErrorAction Stop
+                Write-Host "Router and DNS options set to $ServerIP"
+            } else {
+                Write-Warning "Could not detect server IP for options. You may need to set router/DNS manually."
+            }
+        }
+        catch {
+            Write-Error "Failed to create or configure scope '$($Scope.Name)': $_"
+        }
+    }
 
-for ($i=1; $i -le $ScopeCount; $i++) {
-    Write-Host "`n--- Scope $i ---"
-    $Name = Read-Host "Enter name for scope $i"
-    $StartRange = Read-Host "Enter start IP suffix (e.g., 10 for $BaseSubnet.10)"
-    $EndRange = Read-Host "Enter end IP suffix (e.g., 50 for $BaseSubnet.50)"
-    $SubnetMask = Read-Host "Enter subnet mask (e.g., 255.255.255.0)"
-
-    $Scopes += [PSCustomObject]@{
-        Name = $Name
-        StartIP = "$BaseSubnet.$StartRange"
-        EndIP = "$BaseSubnet.$EndRange"
-        SubnetMask = $SubnetMask
+    # ----------------------------
+    # Authorize DHCP server
+    # ----------------------------
+    try {
+        $ServerName = $env:COMPUTERNAME
+        Write-Host "`nAuthorizing DHCP server in Active Directory..."
+        Add-DhcpServerInDC -DnsName $ServerName -IPAddress $ServerIP -ErrorAction Stop
+        Write-Host "DHCP server authorized successfully."
+    }
+    catch {
+        Write-Error "Failed to authorize DHCP server: $_"
     }
 }
-
-# Create and configure scopes
-foreach ($scope in $Scopes) {
-    Write-Host "`nCreating scope $($scope.Name)..."
-    Add-DhcpServerv4Scope -Name $scope.Name `
-        -StartRange $scope.StartIP -EndRange $scope.EndIP `
-        -SubnetMask $scope.SubnetMask `
-        -State Active
-
-    # Set options: Router (gateway) and DNS
-    if ($Gateway -ne "") {
-        Set-DhcpServerv4OptionValue -ScopeId $scope.StartIP -Router $Gateway
-    }
-    Set-DhcpServerv4OptionValue -ScopeId $scope.StartIP -DnsServer $ServerIP
+catch {
+    Write-Error "A fatal error occurred in the script: $_"
 }
-
-# Authorize DHCP server in AD
-Write-Host "`nAuthorizing DHCP server..."
-Add-DhcpServerInDC -DnsName $env:COMPUTERNAME -IPAddress $ServerIP
-
-Write-Host "`nAll DHCP scopes created, options set, and DHCP server authorized."
+finally {
+    Write-Host "`nDHCP setup script finished. Press any key to exit..."
+    $null = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}
