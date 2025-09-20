@@ -7,10 +7,16 @@
     - Prompts for multiple scopes and ranges
     - Configures router and DNS options
     - Authorizes DHCP server in AD
-    - Full error handling and pause at end
+    - Full error handling and pause at start and end
 .NOTES
     Run as Administrator on your Domain Controller.
 #>
+
+# ----------------------------
+# Pause at start for double-click execution
+# ----------------------------
+Write-Host "Running DHCP setup script. Press any key to continue..."
+$null = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
 try {
     # ----------------------------
