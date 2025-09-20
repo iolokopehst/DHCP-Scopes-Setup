@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Automated DHCP scopes setup with error handling.
+    Automated DHCP scopes setup with robust error handling.
 .DESCRIPTION
     - Checks for Admin privileges
     - Installs DHCP role if missing
-    - Prompts for scopes and ranges
+    - Prompts for multiple scopes and ranges
     - Configures router and DNS options
     - Authorizes DHCP server in AD
-    - Full error handling and pause
+    - Full error handling and pause at end
 .NOTES
     Run as Administrator on your Domain Controller.
 #>
