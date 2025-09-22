@@ -6,6 +6,7 @@ Automated DHCP Scopes creation script with full error handling and logging.
 - Installs DHCP Server role if missing
 - Prompts user for number of scopes and configuration for each
 - Creates DHCP scopes, sets default gateway and DNS options
+- Handles partial IP input for start/end addresses
 - Authorizes DHCP server in Active Directory
 - Logs all actions and errors
 #>
@@ -39,7 +40,6 @@ try {
         Write-Host "DHCP Server role not found. Installing..."
         Install-WindowsFeature -Name DHCP -IncludeManagementTools -ErrorAction Stop
         Write-Host "DHCP Server role installed successfully.`n"
-        
         # Refresh PSModulePath
         $env:PSModulePath = [System.Environment]::GetEnvironmentVariable("PSModulePath","Machine")
     }
@@ -67,15 +67,31 @@ try {
         $ScopeName = Read-Host "Enter the name for scope $i"
         $Network = Read-Host "Enter the network for scope $ScopeName (e.g., 192.168.10.0)"
         $SubnetMask = Read-Host "Enter the subnet mask (e.g., 255.255.255.0)"
-        $StartIP = Read-Host "Enter the starting IP (default: .10)"
-        $EndIP = Read-Host "Enter the ending IP (default: .254)"
+        $StartIP = Read-Host "Enter the starting IP (default: .10 or last octet only)"
+        $EndIP = Read-Host "Enter the ending IP (default: .254 or last octet only)"
         $Gateway = Read-Host "Enter the default gateway (default: first IP of network)"
         $DNSServer = Read-Host "Enter the DNS server (default: this server's IP)"
 
-        # Fill defaults if left blank
-        if ([string]::IsNullOrWhiteSpace($StartIP)) { $StartIP = "$($Network.Substring(0,$Network.LastIndexOf('.')+1))10" }
-        if ([string]::IsNullOrWhiteSpace($EndIP)) { $EndIP = "$($Network.Substring(0,$Network.LastIndexOf('.')+1))254" }
-        if ([string]::IsNullOrWhiteSpace($Gateway)) { $Gateway = "$($Network.Substring(0,$Network.LastIndexOf('.')+1))1" }
+        # Base network for partial IPs
+        $baseNetwork = $Network.Substring(0,$Network.LastIndexOf('.')+1)
+
+        # Fill defaults or fix partial IP input
+        if ([string]::IsNullOrWhiteSpace($StartIP)) { 
+            $StartIP = "${baseNetwork}10" 
+        } elseif ($StartIP -match '^\d+$') {
+            $StartIP = "${baseNetwork}$StartIP"
+        }
+
+        if ([string]::IsNullOrWhiteSpace($EndIP)) { 
+            $EndIP = "${baseNetwork}254" 
+        } elseif ($EndIP -match '^\d+$') {
+            $EndIP = "${baseNetwork}$EndIP"
+        }
+
+        if ([string]::IsNullOrWhiteSpace($Gateway)) { 
+            $Gateway = "${baseNetwork}1" 
+        }
+
         if ([string]::IsNullOrWhiteSpace($DNSServer)) { 
             $DNSServer = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.InterfaceAlias -notlike "*Loopback*"} | Select-Object -First 1 -ExpandProperty IPAddress) 
         }
