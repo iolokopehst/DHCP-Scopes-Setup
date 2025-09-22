@@ -39,8 +39,18 @@ try {
         Write-Host "DHCP Server role not found. Installing..."
         Install-WindowsFeature -Name DHCP -IncludeManagementTools -ErrorAction Stop
         Write-Host "DHCP Server role installed successfully.`n"
-    } else {
-        Write-Host "DHCP Server role already installed. Continuing...`n"
+        
+        # Refresh PSModulePath
+        $env:PSModulePath = [System.Environment]::GetEnvironmentVariable("PSModulePath","Machine")
+    }
+
+    # ----------------------------
+    # Check if DhcpServer module exists
+    # ----------------------------
+    if (-not (Get-Module -ListAvailable -Name DhcpServer)) {
+        Write-Error "The DhcpServer module cannot be found. You may need to restart the server to complete the DHCP Server installation."
+        Read-Host "Press Enter to exit"
+        exit 1
     }
 
     Import-Module DhcpServer -ErrorAction Stop
