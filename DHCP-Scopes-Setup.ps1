@@ -1,9 +1,10 @@
 <#
 .SYNOPSIS
-Interactive DHCP Scopes creation with logging and error handling.
+Automated DHCP Scopes creation script with full error handling and logging.
 .DESCRIPTION
 - Self-elevates if not run as administrator
-- Prompts user for number of DHCP scopes and configuration for each
+- Installs DHCP Server role if missing
+- Prompts user for number of scopes and configuration for each
 - Creates DHCP scopes, sets default gateway and DNS options
 - Authorizes DHCP server in Active Directory
 - Logs all actions and errors
@@ -30,6 +31,18 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 Start-Transcript -Path $LogFile -Force
 
 try {
+    # ----------------------------
+    # Install DHCP Server role if missing
+    # ----------------------------
+    $dhcpRole = Get-WindowsFeature DHCP
+    if (-not $dhcpRole.Installed) {
+        Write-Host "DHCP Server role not found. Installing..."
+        Install-WindowsFeature -Name DHCP -IncludeManagementTools -ErrorAction Stop
+        Write-Host "DHCP Server role installed successfully.`n"
+    } else {
+        Write-Host "DHCP Server role already installed. Continuing...`n"
+    }
+
     Import-Module DhcpServer -ErrorAction Stop
 
     # ----------------------------
